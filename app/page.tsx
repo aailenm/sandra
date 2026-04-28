@@ -28,6 +28,8 @@ type HeaderMatch = {
   columnIndexMap: Record<(typeof REQUIRED_HEADERS)[number], number>;
 };
 
+const AMOUNT_HEADERS = ["Neto Gravado", "No Gravado", "IVA", "Total"] as const;
+
 function normalizeHeader(value: unknown) {
   return String(value ?? "")
     .trim()
@@ -106,6 +108,15 @@ async function processWorkbook(file: File): Promise<FileResult> {
     }
 
     const { rowIndex, columnIndexMap } = headerMatch;
+    const tipoColumnIndex = rows[rowIndex].findIndex(
+      (cell) => normalizeHeader(cell) === normalizeHeader("Tipo"),
+    );
+    const totals = {
+      "Neto Gravado": 0,
+      "No Gravado": 0,
+      IVA: 0,
+      Total: 0,
+    } as Record<(typeof AMOUNT_HEADERS)[number], number>;
 
     for (let currentRowIndex = rowIndex + 1; currentRowIndex < rows.length; currentRowIndex += 1) {
       const row = rows[currentRowIndex];
@@ -114,21 +125,57 @@ async function processWorkbook(file: File): Promise<FileResult> {
         .toUpperCase();
       const exchangeRate = toNumber(getCellValue(row, columnIndexMap["Tipo Cambio"]));
       const multiplier = currency === "USD" ? exchangeRate : 1;
+      const sign = String(getCellValue(row, tipoColumnIndex) ?? "")
+        .toLowerCase()
+        .includes("nota de crédito")
+        ? -1
+        : 1;
 
-      const amounts = [
-        toNumber(getCellValue(row, columnIndexMap["Neto Gravado"])),
-        toNumber(getCellValue(row, columnIndexMap["No Gravado"])),
-        toNumber(getCellValue(row, columnIndexMap.Exento)),
-        toNumber(getCellValue(row, columnIndexMap.IVA)),
-        toNumber(getCellValue(row, columnIndexMap.Total)),
-      ];
-
-      row[columnIndexMap["Neto Gravado"]] = amounts[0] * multiplier;
-      row[columnIndexMap["No Gravado"]] = amounts[1] * multiplier;
-      row[columnIndexMap.Exento] = amounts[2] * multiplier;
-      row[columnIndexMap.IVA] = amounts[3] * multiplier;
-      row[columnIndexMap.Total] = amounts[4] * multiplier;
+      AMOUNT_HEADERS.forEach((header) => {
+        const convertedAmount = toNumber(getCellValue(row, columnIndexMap[header])) * multiplier * sign;
+        row[columnIndexMap[header]] = convertedAmount;
+        totals[header] += convertedAmount;
+      });
     }
+
+    const columnsToRemove = [columnIndexMap.Exento].sort((a, b) => b - a);
+
+    rows.forEach((row) => {
+      columnsToRemove.forEach((columnIndex) => {
+        if (row.length > columnIndex) {
+          row.splice(columnIndex, 1);
+        }
+      });
+    });
+
+    const adjustedIndexMap = {
+      "Neto Gravado": columnsToRemove.reduce(
+        (index, removedIndex) => (index > removedIndex ? index - 1 : index),
+        columnIndexMap["Neto Gravado"],
+      ),
+      "No Gravado": columnsToRemove.reduce(
+        (index, removedIndex) => (index > removedIndex ? index - 1 : index),
+        columnIndexMap["No Gravado"],
+      ),
+      IVA: columnsToRemove.reduce(
+        (index, removedIndex) => (index > removedIndex ? index - 1 : index),
+        columnIndexMap.IVA,
+      ),
+      Total: columnsToRemove.reduce(
+        (index, removedIndex) => (index > removedIndex ? index - 1 : index),
+        columnIndexMap.Total,
+      ),
+    } as Record<(typeof AMOUNT_HEADERS)[number], number>;
+
+    const totalRowLength = rows[rowIndex]?.length ?? 0;
+    const blankRow: unknown[] = Array.from({ length: totalRowLength }, () => "");
+    const totalRow: unknown[] = Array.from({ length: totalRowLength }, () => "");
+
+    AMOUNT_HEADERS.forEach((header) => {
+      totalRow[adjustedIndexMap[header]] = totals[header];
+    });
+
+    rows.push(blankRow, totalRow);
 
     const outputWorksheet = XLSX.utils.aoa_to_sheet(rows);
     workbook.Sheets[sheetName] = outputWorksheet;
