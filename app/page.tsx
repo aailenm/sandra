@@ -13,14 +13,6 @@ const REQUIRED_HEADERS = [
   "Total",
 ] as const;
 
-const ADDED_HEADERS = [
-  "Neto Gravado ARS",
-  "No Gravado ARS",
-  "Exento ARS",
-  "IVA ARS",
-  "Total ARS",
-] as const;
-
 type StatusType = "processed" | "skipped" | "error";
 
 type FileResult = {
@@ -114,11 +106,6 @@ async function processWorkbook(file: File): Promise<FileResult> {
     }
 
     const { rowIndex, columnIndexMap } = headerMatch;
-    const nextColumnStart = rows[rowIndex].length;
-
-    ADDED_HEADERS.forEach((header, offset) => {
-      rows[rowIndex][nextColumnStart + offset] = header;
-    });
 
     for (let currentRowIndex = rowIndex + 1; currentRowIndex < rows.length; currentRowIndex += 1) {
       const row = rows[currentRowIndex];
@@ -136,9 +123,11 @@ async function processWorkbook(file: File): Promise<FileResult> {
         toNumber(getCellValue(row, columnIndexMap.Total)),
       ];
 
-      amounts.forEach((amount, offset) => {
-        row[nextColumnStart + offset] = amount * multiplier;
-      });
+      row[columnIndexMap["Neto Gravado"]] = amounts[0] * multiplier;
+      row[columnIndexMap["No Gravado"]] = amounts[1] * multiplier;
+      row[columnIndexMap.Exento] = amounts[2] * multiplier;
+      row[columnIndexMap.IVA] = amounts[3] * multiplier;
+      row[columnIndexMap.Total] = amounts[4] * multiplier;
     }
 
     const outputWorksheet = XLSX.utils.aoa_to_sheet(rows);
