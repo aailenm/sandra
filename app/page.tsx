@@ -155,7 +155,7 @@ async function processWorkbook(file: File): Promise<FileResult> {
     return {
       name: file.name,
       status: "processed",
-      message: `Processed sheet "${sheetName}"`,
+      message: `Hoja procesada: "${sheetName}"`,
       downloadName: createOutputName(file.name),
       downloadUrl: URL.createObjectURL(blob),
     };
@@ -164,7 +164,7 @@ async function processWorkbook(file: File): Promise<FileResult> {
   return {
     name: file.name,
     status: "skipped",
-    message: "No sheet with the required headers was found",
+    message: "No se encontro ninguna hoja con los encabezados requeridos",
   };
 }
 
@@ -207,7 +207,7 @@ export default function Home() {
         nextResults.push({
           name: file.name,
           status: "error",
-          message: error instanceof Error ? error.message : "Unknown processing error",
+          message: error instanceof Error ? error.message : "Error desconocido al procesar",
         });
       }
     }
@@ -219,22 +219,22 @@ export default function Home() {
   return (
     <main className="page">
       <section className="panel">
-        <h1>Excel to ARS</h1>
+        <h1>Excel a ARS</h1>
         <p>
-          Upload one or more <code>.xlsx</code> files, process them entirely in your browser, and
-          download converted copies.
+          Subi uno o varios archivos <code>.xlsx</code>, procesalos completamente en tu navegador y
+          descarga las copias convertidas.
         </p>
 
         <input type="file" accept=".xlsx" multiple onChange={handleFileChange} />
 
         <button type="button" onClick={handleProcess} disabled={!files.length || isProcessing}>
-          {isProcessing ? "Processing..." : "Process files"}
+          {isProcessing ? "Procesando..." : "Procesar archivos"}
         </button>
 
         <div className="summary">
-          <span>Processed: {summary.processed}</span>
-          <span>Skipped: {summary.skipped}</span>
-          <span>Errors: {summary.errors}</span>
+          <span>Procesados: {summary.processed}</span>
+          <span>Omitidos: {summary.skipped}</span>
+          <span>Errores: {summary.errors}</span>
         </div>
 
         <ul className="statusList">
@@ -246,7 +246,7 @@ export default function Home() {
               </div>
               {result.downloadUrl ? (
                 <a href={result.downloadUrl} download={result.downloadName}>
-                  Download
+                  Descargar
                 </a>
               ) : null}
             </li>

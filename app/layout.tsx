@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Excel to ARS",
-  description: "Convert receipt amounts to ARS directly in your browser.",
+  title: "Excel a ARS",
+  description: "Converti montos de comprobantes a ARS directamente en tu navegador.",
 };
 
 export default function RootLayout({
@@ -12,7 +12,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body>{children}</body>
     </html>
   );
