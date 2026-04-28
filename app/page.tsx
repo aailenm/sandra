@@ -1,0 +1,258 @@
+"use client";
+
+import { ChangeEvent, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
+
+const REQUIRED_HEADERS = [
+  "Tipo Cambio",
+  "Moneda",
+  "Neto Gravado",
+  "No Gravado",
+  "Exento",
+  "IVA",
+  "Total",
+] as const;
+
+const ADDED_HEADERS = [
+  "Neto Gravado ARS",
+  "No Gravado ARS",
+  "Exento ARS",
+  "IVA ARS",
+  "Total ARS",
+] as const;
+
+type StatusType = "processed" | "skipped" | "error";
+
+type FileResult = {
+  name: string;
+  status: StatusType;
+  message: string;
+  downloadName?: string;
+  downloadUrl?: string;
+};
+
+type HeaderMatch = {
+  rowIndex: number;
+  columnIndexMap: Record<(typeof REQUIRED_HEADERS)[number], number>;
+};
+
+function normalizeHeader(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function toNumber(value: unknown) {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return Number(value ?? 0);
+
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+
+  const normalized =
+    trimmed.includes(",") && trimmed.includes(".")
+      ? trimmed.replace(/\./g, "").replace(",", ".")
+      : trimmed.replace(",", ".");
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getCellValue(row: unknown[], index: number) {
+  return index >= 0 ? row[index] : undefined;
+}
+
+function findHeaderRow(rows: unknown[][]): HeaderMatch | null {
+  const normalizedHeaders = REQUIRED_HEADERS.map((header) => normalizeHeader(header));
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] ?? [];
+    const normalizedRow = row.map((cell) => normalizeHeader(cell));
+    const columnIndexMap = {} as Record<(typeof REQUIRED_HEADERS)[number], number>;
+
+    let allFound = true;
+
+    REQUIRED_HEADERS.forEach((header, index) => {
+      const columnIndex = normalizedRow.indexOf(normalizedHeaders[index]);
+      if (columnIndex === -1) {
+        allFound = false;
+        return;
+      }
+      columnIndexMap[header] = columnIndex;
+    });
+
+    if (allFound) {
+      return { rowIndex, columnIndexMap };
+    }
+  }
+
+  return null;
+}
+
+function createOutputName(fileName: string) {
+  const dotIndex = fileName.lastIndexOf(".");
+  if (dotIndex === -1) return `${fileName}_ARS.xlsx`;
+  return `${fileName.slice(0, dotIndex)}_ARS${fileName.slice(dotIndex)}`;
+}
+
+async function processWorkbook(file: File): Promise<FileResult> {
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+
+  for (const sheetName of workbook.SheetNames) {
+    const worksheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, {
+      header: 1,
+      defval: "",
+      raw: false,
+    });
+    const headerMatch = findHeaderRow(rows);
+
+    if (!headerMatch) {
+      continue;
+    }
+
+    const { rowIndex, columnIndexMap } = headerMatch;
+    const nextColumnStart = rows[rowIndex].length;
+
+    ADDED_HEADERS.forEach((header, offset) => {
+      rows[rowIndex][nextColumnStart + offset] = header;
+    });
+
+    for (let currentRowIndex = rowIndex + 1; currentRowIndex < rows.length; currentRowIndex += 1) {
+      const row = rows[currentRowIndex];
+      const currency = String(getCellValue(row, columnIndexMap.Moneda) ?? "")
+        .trim()
+        .toUpperCase();
+      const exchangeRate = toNumber(getCellValue(row, columnIndexMap["Tipo Cambio"]));
+      const multiplier = currency === "USD" ? exchangeRate : 1;
+
+      const amounts = [
+        toNumber(getCellValue(row, columnIndexMap["Neto Gravado"])),
+        toNumber(getCellValue(row, columnIndexMap["No Gravado"])),
+        toNumber(getCellValue(row, columnIndexMap.Exento)),
+        toNumber(getCellValue(row, columnIndexMap.IVA)),
+        toNumber(getCellValue(row, columnIndexMap.Total)),
+      ];
+
+      amounts.forEach((amount, offset) => {
+        row[nextColumnStart + offset] = amount * multiplier;
+      });
+    }
+
+    const outputWorksheet = XLSX.utils.aoa_to_sheet(rows);
+    workbook.Sheets[sheetName] = outputWorksheet;
+
+    const output = XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+    });
+    const blob = new Blob([output], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    return {
+      name: file.name,
+      status: "processed",
+      message: `Processed sheet "${sheetName}"`,
+      downloadName: createOutputName(file.name),
+      downloadUrl: URL.createObjectURL(blob),
+    };
+  }
+
+  return {
+    name: file.name,
+    status: "skipped",
+    message: "No sheet with the required headers was found",
+  };
+}
+
+export default function Home() {
+  const [files, setFiles] = useState<File[]>([]);
+  const [results, setResults] = useState<FileResult[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const summary = useMemo(() => {
+    return {
+      processed: results.filter((result) => result.status === "processed").length,
+      skipped: results.filter((result) => result.status === "skipped").length,
+      errors: results.filter((result) => result.status === "error").length,
+    };
+  }, [results]);
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const nextFiles = Array.from(event.target.files ?? []);
+    setFiles(nextFiles);
+    setResults([]);
+  }
+
+  async function handleProcess() {
+    if (!files.length) return;
+
+    results.forEach((result) => {
+      if (result.downloadUrl) {
+        URL.revokeObjectURL(result.downloadUrl);
+      }
+    });
+
+    setIsProcessing(true);
+    const nextResults: FileResult[] = [];
+
+    for (const file of files) {
+      try {
+        const result = await processWorkbook(file);
+        nextResults.push(result);
+      } catch (error) {
+        nextResults.push({
+          name: file.name,
+          status: "error",
+          message: error instanceof Error ? error.message : "Unknown processing error",
+        });
+      }
+    }
+
+    setResults(nextResults);
+    setIsProcessing(false);
+  }
+
+  return (
+    <main className="page">
+      <section className="panel">
+        <h1>Excel to ARS</h1>
+        <p>
+          Upload one or more <code>.xlsx</code> files, process them entirely in your browser, and
+          download converted copies.
+        </p>
+
+        <input type="file" accept=".xlsx" multiple onChange={handleFileChange} />
+
+        <button type="button" onClick={handleProcess} disabled={!files.length || isProcessing}>
+          {isProcessing ? "Processing..." : "Process files"}
+        </button>
+
+        <div className="summary">
+          <span>Processed: {summary.processed}</span>
+          <span>Skipped: {summary.skipped}</span>
+          <span>Errors: {summary.errors}</span>
+        </div>
+
+        <ul className="statusList">
+          {results.map((result) => (
+            <li key={`${result.status}-${result.name}`} className={`statusItem ${result.status}`}>
+              <div>
+                <strong>{result.name}</strong>
+                <p>{result.message}</p>
+              </div>
+              {result.downloadUrl ? (
+                <a href={result.downloadUrl} download={result.downloadName}>
+                  Download
+                </a>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </section>
+    </main>
+  );
+}
